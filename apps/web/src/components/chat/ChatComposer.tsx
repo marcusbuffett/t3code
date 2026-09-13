@@ -124,6 +124,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { useComposerTriggerState } from "./useComposerTriggerState";
+import { preventPointerFocus, shouldSkipComposerCollapse } from "./composerPointerFocus";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
@@ -2153,6 +2154,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
   const composerBlurFrameRef = useRef<number | null>(null);
+  const composerPointerDownAtRef = useRef<number | null>(null);
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
@@ -4769,7 +4771,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             type="button"
             className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
             aria-label={`Preview ${image.name}`}
-            onPointerDown={(event) => event.preventDefault()}
+            onPointerDown={preventPointerFocus}
             onClick={() => {
               const preview = buildExpandedImagePreview(composerImages, image.id);
               if (preview) onExpandImage(preview);
@@ -4804,7 +4806,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             type="button"
             className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             aria-label={`Show ${String(restingImagePreviewCounts.overflowCount)} more image attachments`}
-            onPointerDown={(event) => event.preventDefault()}
+            onPointerDown={preventPointerFocus}
             onClick={() => {
               if (isComposerCollapsedMobile) {
                 expandMobileComposer();
@@ -5786,6 +5788,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (mobileComposerExpandInFlightRef.current) {
         return;
       }
+      if (shouldSkipComposerCollapse(composerPointerDownAtRef.current, performance.now())) {
+        return;
+      }
       const composerSurface = composerSurfaceRef.current;
       const composerForm = composerFormRef.current;
       const activeElement = document.activeElement;
@@ -6101,6 +6106,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ref={composerFormRef}
       onSubmit={submitComposer}
       onPointerDownCapture={(event) => {
+        composerPointerDownAtRef.current = performance.now();
         const target = event.target;
         if (isInsideRestingComposerControlScope(target)) return;
         if (isInsideCollapsedComposerControls(target)) return;
@@ -6283,7 +6289,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   : "text-placeholder",
                                 !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
                               )}
-                              onPointerDown={(event) => event.preventDefault()}
+                              onPointerDown={preventPointerFocus}
                               onClick={expandMobileComposer}
                               aria-label="Write custom answer"
                             >
@@ -6382,7 +6388,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? "text-foreground"
                       : "text-placeholder",
                   )}
-                  onPointerDown={(event) => event.preventDefault()}
+                  onPointerDown={preventPointerFocus}
                   onClick={isChoiceOnlyPendingQuestion ? undefined : expandMobileComposer}
                   disabled={isChoiceOnlyPendingQuestion}
                   aria-label="Expand composer"
@@ -6404,7 +6410,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
                   disabled={collapsedComposerPrimaryActionDisabled}
                   aria-label={collapsedComposerPrimaryActionLabel}
-                  onPointerDown={(event) => event.preventDefault()}
+                  onPointerDown={preventPointerFocus}
                   onClick={(event) => {
                     event.stopPropagation();
                     submitComposer();
@@ -6998,7 +7004,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               type="button"
                               variant="ghost"
                               size="icon-sm"
-                              onPointerDown={(event) => event.preventDefault()}
+                              onPointerDown={preventPointerFocus}
                               onClick={() => attachmentInputRef.current?.click()}
                               aria-label="Attach files"
                             />
