@@ -30,8 +30,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -597,16 +597,51 @@ export function selectRequestCredential(
   return undefined;
 }
 
+const AUTH_DISABLED_SUBJECT = "auth-disabled";
+const AUTH_DISABLED_SESSION_TTL = Duration.days(3650);
+
+/**
+ * With authentication disabled every request resolves to this one administrative
+ * session. It is a real stored session so WebSocket tickets and session listing
+ * keep working unchanged; each startup replaces the previous one.
+ */
+const issueOpenSession = (sessions: SessionStore.SessionStore["Service"]) =>
+  sessions
+    .issue({
+      subject: AUTH_DISABLED_SUBJECT,
+      method: "browser-session-cookie",
+      scopes: AuthAdministrativeScopes,
+      ttl: AUTH_DISABLED_SESSION_TTL,
+      client: { label: "Authentication disabled", deviceType: "unknown" },
+      replaceActiveForSubjectAndMethod: true,
+    })
+    .pipe(
+      Effect.map((session): AuthenticatedSession => ({
+        sessionId: session.sessionId,
+        subject: AUTH_DISABLED_SUBJECT,
+        method: session.method,
+        scopes: session.scopes,
+        expiresAt: session.expiresAt,
+      })),
+      Effect.tap(() =>
+        Effect.logWarning(
+          "Client authentication is disabled (T3CODE_DISABLE_AUTH); every request is treated as an administrative session.",
+        ),
+      ),
+      Effect.orDie,
+    );
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
-  const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  const openSession = config.authDisabled ? yield* issueOpenSession(sessions) : undefined;
 
   const authenticateToken = (
     token: string,
@@ -638,6 +673,9 @@ export const make = Effect.gen(function* () {
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+    if (openSession) {
+      return Effect.succeed(openSession);
+    }
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,

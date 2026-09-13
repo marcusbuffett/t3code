@@ -80,6 +80,12 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+const disableAuthFlag = Flag.Boolean("disable-auth").pipe(
+  Flag.withDescription(
+    "Skip client authentication: every request is treated as an administrative session (equivalent to T3CODE_DISABLE_AUTH).",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -156,6 +162,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  authDisabled: Config.Boolean("T3CODE_DISABLE_AUTH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -191,6 +201,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly authDisabled: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -225,6 +236,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  authDisabled: disableAuthFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -268,6 +280,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      authDisabled: flags.authDisabled ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -375,6 +388,13 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const authDisabled = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.authDisabled,
+        Option.fromUndefinedOr(env.authDisabled),
+      ),
+      () => false,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -436,6 +456,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      authDisabled,
     };
 
     return config;
@@ -459,6 +480,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      authDisabled: Option.none(),
     },
     cliLogLevel,
   );

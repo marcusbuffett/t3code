@@ -466,6 +466,28 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
+  it.effect("treats every request as one administrative session when auth is disabled", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+
+      const verified = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest("not-a-real-token"),
+      );
+      expect(verified.subject).toBe("auth-disabled");
+      expect([...verified.scopes]).toEqual([...AuthAdministrativeScopes]);
+
+      const state = yield* serverAuth.getSessionState(
+        makeCookieRequest(sessions.cookieName, "junk"),
+      );
+      expect(state.authenticated).toBe(true);
+
+      const ticket = yield* serverAuth.issueWebSocketTicket(verified);
+      const upgraded = yield* sessions.verifyWebSocketToken(ticket.ticket);
+      expect(upgraded.sessionId).toBe(verified.sessionId);
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer({ authDisabled: true }))),
+  );
+
   it.effect("issues startup pairing URLs that bootstrap administrative sessions", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

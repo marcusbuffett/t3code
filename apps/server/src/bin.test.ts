@@ -122,6 +122,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      authDisabled: false,
     } satisfies ServerConfig.ServerConfig["Service"];
   });
 
