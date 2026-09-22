@@ -128,6 +128,21 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
 }
 
 /**
+ * Resolve the namespace for descriptive worktree branches from the
+ * `worktreeBranchPrefix` setting. The value is sanitized like a branch
+ * fragment; an empty, absent, or slash-containing value falls back to the
+ * built-in prefix so generated names always stay a single namespace deep.
+ */
+export function resolveWorktreeBranchPrefix(raw: string | null | undefined): string {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return WORKTREE_BRANCH_PREFIX;
+  }
+  const sanitized = sanitizeBranchFragment(trimmed);
+  return sanitized.includes("/") ? WORKTREE_BRANCH_PREFIX : sanitized;
+}
+
+/**
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {

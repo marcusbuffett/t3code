@@ -8,6 +8,7 @@ import {
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
+  resolveWorktreeBranchPrefix,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -209,6 +210,26 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("resolveWorktreeBranchPrefix", () => {
+  it("falls back to the built-in prefix when unset or blank", () => {
+    expect(resolveWorktreeBranchPrefix(undefined)).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(resolveWorktreeBranchPrefix(null)).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(resolveWorktreeBranchPrefix("")).toBe(WORKTREE_BRANCH_PREFIX);
+    expect(resolveWorktreeBranchPrefix("   ")).toBe(WORKTREE_BRANCH_PREFIX);
+  });
+
+  it("sanitizes a configured prefix like a branch fragment", () => {
+    expect(resolveWorktreeBranchPrefix("marcus")).toBe("marcus");
+    expect(resolveWorktreeBranchPrefix(" Marcus ")).toBe("marcus");
+    expect(resolveWorktreeBranchPrefix("marcus/")).toBe("marcus");
+    expect(resolveWorktreeBranchPrefix("my name")).toBe("my-name");
+  });
+
+  it("rejects nested prefixes so generated names stay one namespace deep", () => {
+    expect(resolveWorktreeBranchPrefix("marcus/wip")).toBe(WORKTREE_BRANCH_PREFIX);
   });
 });
 

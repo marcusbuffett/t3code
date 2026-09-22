@@ -1005,6 +1005,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
   "worktreeSubmodules",
+  "worktreeBranchPrefix",
   "defaultAutoPull",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
@@ -1032,6 +1033,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
+  worktreeBranchPrefix: Schema.optionalKey(TrimmedString),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
@@ -1221,6 +1223,13 @@ export const ServerSettings = Schema.Struct({
   worktreeSubmodules: ForwardCompatibleNullable(WorktreeSubmodules).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Namespace for descriptive worktree branch names (`<prefix>/<slug>`).
+   * Empty means the built-in `t3code` prefix. Temporary `t3code/<hex>`
+   * branches always keep the built-in prefix; only the descriptive rename
+   * a thread receives after its first message uses this value.
+   */
+  worktreeBranchPrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1513,6 +1522,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
+  worktreeBranchPrefix: Schema.optionalKey(TrimmedString),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(

@@ -106,6 +106,29 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
+describe("ServerSettings worktree branch prefix", () => {
+  it("defaults to empty so the built-in prefix applies", () => {
+    expect(DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix).toBe("");
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("");
+  });
+
+  it("round-trips a trimmed prefix through settings and patches", () => {
+    expect(decodeServerSettings({ worktreeBranchPrefix: " marcus " }).worktreeBranchPrefix).toBe(
+      "marcus",
+    );
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: "marcus" })).toEqual({
+      worktreeBranchPrefix: "marcus",
+    });
+    expect(
+      decodeServerSettingsPatch({
+        projectSettingsOverrides: { "project-1": { worktreeBranchPrefix: "marcus" } },
+      }),
+    ).toEqual({
+      projectSettingsOverrides: { "project-1": { worktreeBranchPrefix: "marcus" } },
+    });
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

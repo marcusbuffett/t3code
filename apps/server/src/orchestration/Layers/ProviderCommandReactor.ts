@@ -15,7 +15,11 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import {
+  isTemporaryWorktreeBranch,
+  resolveWorktreeBranchPrefix,
+  WORKTREE_BRANCH_PREFIX,
+} from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -186,16 +190,24 @@ function stalePendingRequestDetail(
   return `Stale pending ${requestKind} request: ${requestId}. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`;
 }
 
-function buildGeneratedWorktreeBranchName(raw: string): string {
+/**
+ * Turn a provider's branch suggestion into `<prefix>/<slug>`. A suggestion
+ * that already carries the built-in or configured prefix is not doubled.
+ */
+export function buildGeneratedWorktreeBranchName(
+  raw: string,
+  prefix: string = WORKTREE_BRANCH_PREFIX,
+): string {
   const normalized = raw
     .trim()
     .toLowerCase()
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.startsWith(`${WORKTREE_BRANCH_PREFIX}/`)
-    ? normalized.slice(`${WORKTREE_BRANCH_PREFIX}/`.length)
-    : normalized;
+  const knownPrefixes = [`${WORKTREE_BRANCH_PREFIX}/`, `${prefix}/`];
+  const matchedPrefix = knownPrefixes.find((candidate) => normalized.startsWith(candidate));
+  const withoutPrefix =
+    matchedPrefix === undefined ? normalized : normalized.slice(matchedPrefix.length);
 
   const branchFragment = withoutPrefix
     .replace(/[^a-z0-9/_-]+/g, "-")
@@ -206,7 +218,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
-  return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+  return `${prefix}/${safeFragment}`;
 }
 
 const make = Effect.gen(function* () {
@@ -927,7 +939,10 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      const targetBranch = buildGeneratedWorktreeBranchName(
+        generated.branch,
+        resolveWorktreeBranchPrefix(settings.worktreeBranchPrefix),
+      );
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });

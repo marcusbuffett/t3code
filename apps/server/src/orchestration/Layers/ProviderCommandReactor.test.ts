@@ -62,6 +62,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
+  buildGeneratedWorktreeBranchName,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
@@ -114,6 +115,34 @@ async function waitFor(
 
   return poll();
 }
+
+describe("buildGeneratedWorktreeBranchName", () => {
+  it("namespaces the suggestion under the built-in prefix by default", () => {
+    expect(buildGeneratedWorktreeBranchName("Fix Trackpad Typing")).toBe(
+      "t3code/fix-trackpad-typing",
+    );
+    expect(buildGeneratedWorktreeBranchName("refs/heads/t3code/fix-trackpad-typing")).toBe(
+      "t3code/fix-trackpad-typing",
+    );
+  });
+
+  it("uses the configured prefix and strips either known prefix from the suggestion", () => {
+    expect(buildGeneratedWorktreeBranchName("fix-trackpad-typing", "marcus")).toBe(
+      "marcus/fix-trackpad-typing",
+    );
+    expect(buildGeneratedWorktreeBranchName("t3code/fix-trackpad-typing", "marcus")).toBe(
+      "marcus/fix-trackpad-typing",
+    );
+    expect(buildGeneratedWorktreeBranchName("marcus/fix-trackpad-typing", "marcus")).toBe(
+      "marcus/fix-trackpad-typing",
+    );
+  });
+
+  it("falls back to a placeholder fragment when nothing usable remains", () => {
+    expect(buildGeneratedWorktreeBranchName("marcus/", "marcus")).toBe("marcus/update");
+    expect(buildGeneratedWorktreeBranchName("   ", "marcus")).toBe("marcus/update");
+  });
+});
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<

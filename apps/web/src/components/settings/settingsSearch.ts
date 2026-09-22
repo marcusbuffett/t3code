@@ -416,6 +416,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
+    id: "worktree-branch-prefix",
+    title: "Worktree branch prefix",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["generated branch name namespace t3code"],
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",
