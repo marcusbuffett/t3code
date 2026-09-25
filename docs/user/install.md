@@ -85,6 +85,10 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+A link of the form `t3code://thread/<environment-id>/<thread-id>` opens that
+thread in the desktop app, starting the app if needed. The two IDs are the last
+two parts of the thread's address in the web UI.
+
 ## Mobile app
 
 Install T3 Code from the

@@ -31,6 +31,8 @@ function dependencies(
     createProject: vi.fn(async () => createdProjectId),
     waitForProject: vi.fn(async () => undefined),
     openThread: vi.fn(async () => ({ threadId })),
+    findThread: () => ({ projectId: existingProjectId }),
+    showThread: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -103,5 +105,41 @@ describe("desktop app activation", () => {
       message: "Project path is not available.",
     });
     expect(openThread).not.toHaveBeenCalled();
+  });
+
+  describe("opening a thread", () => {
+    const threadRequest = {
+      version: 1,
+      requestId: "request-2",
+      type: "open-thread",
+      environmentId,
+      threadId,
+    } as const;
+
+    it("shows a thread the client knows", async () => {
+      const deps = dependencies();
+
+      const response = await handleDesktopAppActivationRequest(threadRequest, deps);
+
+      expect(deps.showThread).toHaveBeenCalledWith({ environmentId, threadId });
+      expect(deps.openThread).not.toHaveBeenCalled();
+      expect(deps.createProject).not.toHaveBeenCalled();
+      expect(response).toEqual({
+        version: 1,
+        requestId: threadRequest.requestId,
+        ok: true,
+        projectId: existingProjectId,
+        threadId,
+      });
+    });
+
+    it("does not navigate to a thread the client does not know", async () => {
+      const deps = dependencies({ findThread: () => null });
+
+      const response = await handleDesktopAppActivationRequest(threadRequest, deps);
+
+      expect(deps.showThread).not.toHaveBeenCalled();
+      expect(response).toMatchObject({ ok: false, code: "thread-not-found" });
+    });
   });
 });

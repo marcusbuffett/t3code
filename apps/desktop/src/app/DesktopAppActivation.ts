@@ -206,6 +206,10 @@ export class DesktopAppActivation extends Context.Service<
   DesktopAppActivation,
   {
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
+    /** Hands a request made inside the app, such as a deep link, to the renderer. */
+    readonly request: (
+      request: DesktopAppActivationRequest,
+    ) => Effect.Effect<DesktopAppActivationResponse>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
   }
@@ -269,6 +273,7 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
+    request: (request) => Effect.promise(() => broker.request(request)),
     setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function* (ready) {
       if (!ready) {
         clearRegisteredRenderer();
