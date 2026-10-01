@@ -95,3 +95,7 @@ Downloads, it may need Full Disk Access for the `t3` executable listed in
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./remote-access.md#t3-connect-troubleshooting).
+
+## Closing the desktop window
+
+On Linux, closing the desktop window leaves T3 Code and running threads active in the background. Launch T3 Code again to reopen the window. Use Quit from the application menu to stop the app and its local server.

@@ -232,21 +232,23 @@ export const make = DesktopLifecycle.of({
         },
       );
     });
-    yield* electronApp.on("activate", () => {
-      void runEffect(
-        Effect.gen(function* () {
-          const state = yield* DesktopState.DesktopState;
-          if (yield* Ref.get(state.quitting)) return;
-          yield* desktopWindow.activate;
-        }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
-      );
-    });
+    for (const eventName of ["activate", "second-instance"] as const) {
+      yield* electronApp.on(eventName, () => {
+        void runEffect(
+          Effect.gen(function* () {
+            const state = yield* DesktopState.DesktopState;
+            if (yield* Ref.get(state.quitting)) return;
+            yield* desktopWindow.activate;
+          }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
+        );
+      });
+    }
     yield* electronApp.on("window-all-closed", () => {
       void runEffect(
         Effect.gen(function* () {
           const app = yield* ElectronApp.ElectronApp;
           const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+          if (environment.platform === "win32" && !(yield* Ref.get(state.quitting))) {
             yield* app.quit;
           }
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),

@@ -218,6 +218,55 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
+  for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
+    it.effect(`handles closing the last window and reopening on ${platform}`, () =>
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const activated = yield* Deferred.make<void>();
+        let quitCount = 0;
+        const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform,
+          isDevelopment: false,
+        } as DesktopEnvironment.DesktopEnvironment["Service"]);
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(
+            makeElectronAppLayer(
+              appListeners,
+              Effect.sync(() => {
+                quitCount += 1;
+              }),
+            ),
+          ),
+          Layer.provideMerge(electronThemeLayer),
+          Layer.provideMerge(makeElectronWindowLayer()),
+          Layer.provideMerge(
+            makeDesktopWindowLayer({
+              activate: Deferred.succeed(activated, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+          Layer.provideMerge(environmentLayer),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+            yield* lifecycle.register;
+            const close = appListeners.get("window-all-closed");
+            const reopen = appListeners.get("second-instance");
+            assert.isDefined(close);
+            assert.isDefined(reopen);
+            close!();
+            reopen!();
+            yield* Deferred.await(activated);
+            assert.equal(quitCount, platform === "win32" ? 1 : 0);
+          }),
+        ).pipe(Effect.provide(layer));
+      }),
+    );
+  }
+
   it.effect("ignores app activation while quitting", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
