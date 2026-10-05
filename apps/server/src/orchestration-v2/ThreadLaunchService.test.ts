@@ -1133,56 +1133,94 @@ it.effect("names the worktree itself when the client provides no branch", () =>
   }),
 );
 
-it.effect("renames a temporary t3code/<hash> branch off the provisioning critical path", () =>
-  Effect.gen(function* () {
-    const branchNameStarted = yield* Deferred.make<void>();
-    const allowBranchName = yield* Deferred.make<void>();
-    const harness = makeHarness({
-      createWorktree: (input) =>
-        Effect.succeed({
-          worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
-        } as never),
-      generateBranchName: () =>
-        Deferred.succeed(branchNameStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowBranchName)),
-          Effect.as({ branch: "generated-branch" }),
-        ),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const launched = yield* launches.launch(
-        launchInput({
-          command: "command:launch:temp-branch",
-          thread: "thread:launch:temp-branch",
-          message: "Build the feature",
-          workspace: { type: "worktree", baseRef: "main", branch: "t3code/abcd1234" },
-        }),
-      );
-      yield* Deferred.await(branchNameStarted);
-      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "t3code/abcd1234");
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.runs[0]?.status === "starting")),
-      );
-      assert.equal(
-        (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
-        "t3code/abcd1234",
-      );
-      yield* Deferred.succeed(allowBranchName, undefined);
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
-      );
-      assert.deepEqual(harness.renameBranch.mock.calls[0]?.[0], {
-        cwd: "/repo-worktrees/temp",
-        oldBranch: "t3code/abcd1234",
-        newBranch: "generated-branch",
+it.effect.each(["worktree", "existing_worktree"] as const)(
+  "finishes branch generation and rename before setup or releasing a %s turn",
+  (workspaceType) =>
+    Effect.gen(function* () {
+      const branchNameStarted = yield* Deferred.make<void>();
+      const allowBranchName = yield* Deferred.make<void>();
+      const renameStarted = yield* Deferred.make<void>();
+      const allowRename = yield* Deferred.make<void>();
+      const renameFinished = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        createWorktree: (input) =>
+          Effect.succeed({
+            worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
+          } as never),
+        generateBranchName: () =>
+          Deferred.succeed(branchNameStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowBranchName)),
+            Effect.as({ branch: "generated-branch" }),
+          ),
+        renameBranch: (input) =>
+          Deferred.succeed(renameStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowRename)),
+            Effect.andThen(Deferred.succeed(renameFinished, undefined)),
+            Effect.as({ branch: input.newBranch }),
+          ),
+        runSetup: () =>
+          Deferred.isDone(renameFinished).pipe(
+            Effect.map((finished) => {
+              assert.isTrue(finished, "setup ran before the branch rename completed");
+              return { status: "no-script" as const };
+            }),
+          ),
       });
-    }).pipe(Effect.provide(harness.layer));
-  }),
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: `command:launch:temp-branch:${workspaceType}`,
+            thread: `thread:launch:temp-branch:${workspaceType}`,
+            message: "Build the feature",
+            workspace:
+              workspaceType === "worktree"
+                ? { type: "worktree", baseRef: "main", branch: "t3code/abcd1234" }
+                : {
+                    type: "existing_worktree",
+                    worktreePath: "/repo-worktrees/temp",
+                    branch: "t3code/abcd1234",
+                  },
+          }),
+        );
+        yield* Deferred.await(branchNameStarted);
+        assert.equal(harness.runSetup.mock.calls.length, 0);
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
+          "preparing",
+        );
+        yield* Deferred.succeed(allowBranchName, undefined);
+        yield* Deferred.await(renameStarted);
+        assert.equal(harness.runSetup.mock.calls.length, 0);
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
+          "preparing",
+        );
+        yield* Deferred.succeed(allowRename, undefined);
+        yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              (stored.event.payload.status === "starting" ||
+                stored.event.payload.status === "failed"),
+          ),
+          Stream.runHead,
+        );
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.runs[0]?.status, "starting");
+        assert.equal(projection.thread.branch, "generated-branch");
+        if (workspaceType === "worktree") {
+          assert.equal((yield* tracker.get(launched.threadId))?.branch, "generated-branch");
+        }
+        assert.deepEqual(harness.renameBranch.mock.calls[0]?.[0], {
+          cwd: "/repo-worktrees/temp",
+          oldBranch: "t3code/abcd1234",
+          newBranch: "generated-branch",
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("keeps an explicit branch name instead of generating one", () =>
@@ -1986,34 +2024,50 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
 });
 
-it.effect("cancels tracked setup before provider work is released", () =>
-  Effect.gen(function* () {
-    const entered = yield* Deferred.make<void>();
-    const harness = makeHarness({
-      runSetup: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
-    });
-    yield* Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const input = launchInput({
-        command: "launch:cancel-tracked",
-        thread: "thread:cancel-tracked",
-        message: "Start",
-        workspace: { type: "worktree", baseRef: "main" },
-      });
-      const launched = yield* launches.launch(input);
-      yield* Deferred.await(entered);
-      assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
-      assert.isTrue(yield* tracker.cancel(launched.threadId));
-      assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
-      const projection = yield* threads.getThreadProjection(launched.threadId);
-      assert.equal(projection.runs[0]?.status, "failed");
-      assert.isNull(projection.thread.worktreePath);
-      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
-    }).pipe(Effect.provide(harness.layer));
-  }),
+it.effect.each(["setup", "branch generation", "branch rename"] as const)(
+  "cancels tracked %s before provider work is released",
+  (phase) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const harness = makeHarness(
+        phase === "branch generation"
+          ? {
+              generateBranchName: () =>
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+            }
+          : phase === "branch rename"
+            ? {
+                renameBranch: () =>
+                  Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+              }
+            : {
+                runSetup: () =>
+                  Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+              },
+      );
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const input = launchInput({
+          command: "launch:cancel-tracked",
+          thread: "thread:cancel-tracked",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+        const launched = yield* launches.launch(input);
+        yield* Deferred.await(entered);
+        assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+        assert.isTrue(yield* tracker.cancel(launched.threadId));
+        assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.runs[0]?.status, "failed");
+        assert.isNull(projection.thread.worktreePath);
+        if (phase !== "setup") assert.equal(harness.runSetup.mock.calls.length, 0);
+        assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect.each([0, 1])("releases an async setup before its completion with exit %s", (exitCode) =>
