@@ -272,8 +272,8 @@ const make = Effect.gen(function* () {
         });
 
       // The server owns worktree naming: without an explicit branch, provision
-      // under a temporary `t3code/<hash>` name so the worktree never waits on
-      // name generation, then rename in the background below.
+      // under a temporary `t3code/<hash>` name, then settle its name before
+      // setup or the provider turn can observe the workspace.
       const requestedBranch = input.workspaceStrategy.branch;
       let branch: string | null;
       if (input.workspaceStrategy.type === "worktree" && requestedBranch === undefined) {
@@ -376,9 +376,8 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
 
       // Rename temporary branches (server-invented above, or sent by clients
-      // that name worktrees themselves) in the background so generation latency
-      // never delays provisioning or the provider turn. The temporary name
-      // simply sticks if generation or the rename fails.
+      // that name worktrees themselves) before setup or releasing the turn.
+      // The temporary name sticks if generation or the rename fails.
       if (
         worktreePath !== null &&
         branch !== null &&
@@ -397,23 +396,33 @@ const make = Effect.gen(function* () {
             }),
           ),
           Effect.flatMap((renamed) =>
-            threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`${input.commandId}:branch-rename`),
-              threadId,
-              branch: renamed.branch,
-              worktreePath: worktreeCwd,
-            }),
+            threads
+              .dispatch({
+                type: "thread.metadata.update",
+                commandId: CommandId.make(`${input.commandId}:branch-rename`),
+                threadId,
+                branch: renamed.branch,
+                worktreePath: worktreeCwd,
+              })
+              .pipe(
+                Effect.andThen(
+                  setupTracker.update(threadId, (snapshot) => ({
+                    ...snapshot,
+                    branch: renamed.branch,
+                  })),
+                ),
+              ),
           ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Thread worktree branch rename failed", {
-              commandId: input.commandId,
-              threadId,
-              oldBranch,
-              cause,
-            }),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("Thread worktree branch rename failed", {
+                commandId: input.commandId,
+                threadId,
+                oldBranch,
+                cause,
+              }),
           ),
-          Effect.forkIn(preparationScope),
         );
       }
 
