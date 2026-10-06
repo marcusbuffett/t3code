@@ -224,7 +224,7 @@ describe("DesktopLinuxUrlHandler", () => {
         );
         assert.include(
           recorded.files[0]?.content,
-          'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
+          "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
         assert.deepEqual(recorded.commands, [

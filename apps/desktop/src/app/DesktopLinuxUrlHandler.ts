@@ -67,11 +67,17 @@ const escapeDesktopEntryString = (value: string): string =>
 
 // Exec values are unescaped twice by implementations: first the general
 // string-value rules, then the Exec quoting rules — so writing composes the
-// layers in reverse. The argument is double-quoted with reserved characters
-// backslash-escaped and literal percent signs doubled (field codes), and the
-// general string escaping is applied on top: a literal backslash ends up as
+// layers in reverse. An argument with reserved characters is double-quoted with
+// those backslash-escaped and literal percent signs doubled (field codes), and
+// the general string escaping is applied on top: a literal backslash ends up as
 // four backslashes in the file, a quote as \\", a dollar sign as \\$.
+// Arguments without reserved characters stay unquoted, as the spec allows:
+// xdg-open (xdg-utils 1.2) takes the program literally from the first word, so
+// a quoted path never resolves and it falls back to the web browser.
+const EXEC_ARGUMENT_NEEDS_NO_QUOTING = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
 export function escapeDesktopEntryExecArgument(value: string): string {
+  if (EXEC_ARGUMENT_NEEDS_NO_QUOTING.test(value)) return value.replaceAll("%", () => "%%");
   const quoted = value
     .replaceAll("\\", () => "\\\\")
     .replaceAll("`", () => "\\`")
