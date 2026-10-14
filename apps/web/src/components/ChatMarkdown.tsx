@@ -158,6 +158,7 @@ import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
+import { useFileMetadata } from "../hooks/useFileMetadata";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -1213,6 +1214,9 @@ interface MarkdownFileLinkProps {
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  /** Opens a host folder in the file manager. The files panel cannot show a
+      folder outside the workspace, so a click on one uses this instead. */
+  onOpenFolder?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
   revealLabel?: string | undefined;
@@ -1949,8 +1953,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenInBrowser,
   onOpenMedia,
   onReveal,
+  onOpenFolder,
   revealLabel,
 }: MarkdownFileLinkProps) {
+  // Shares the icon's metadata query, so knowing a link is a folder costs nothing.
+  const isFolder = useFileMetadata(environmentId, iconPath)?.kind === "directory";
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
       return;
@@ -1989,7 +1996,43 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   }, [onOpen, targetPath]);
 
+  const handleOpenFolder = useCallback(() => {
+    if (!onOpenFolder) {
+      return;
+    }
+    void (async () => {
+      try {
+        const result = await onOpenFolder();
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+          return;
+        }
+        reportMarkdownActionFailure({ operation: "open-folder", target: targetPath }, result.cause);
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open folder",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      } catch (cause) {
+        reportMarkdownActionFailure({ operation: "open-folder", target: targetPath }, cause);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open folder",
+            description: cause instanceof Error ? cause.message : "An error occurred.",
+          }),
+        );
+      }
+    })();
+  }, [onOpenFolder, targetPath]);
+
   const handleOpenInFilePreview = useCallback(() => {
+    if (onOpenFolder && isFolder) {
+      handleOpenFolder();
+      return;
+    }
     if (threadRef && panelPath) {
       onOpenInPanel(panelPath, line);
       return;
@@ -1999,7 +2042,17 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
     handleOpenInEditor();
-  }, [handleOpenInEditor, line, onOpenInPanel, onOpenMedia, panelPath, threadRef]);
+  }, [
+    handleOpenFolder,
+    handleOpenInEditor,
+    isFolder,
+    line,
+    onOpenFolder,
+    onOpenInPanel,
+    onOpenMedia,
+    panelPath,
+    threadRef,
+  ]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -2689,6 +2742,18 @@ function useChatMarkdownState({
               : undefined
           }
           revealLabel={revealInFileManagerLabel}
+          onOpenFolder={
+            canUseShellActions &&
+            environmentId !== null &&
+            fileLinkMeta.workspaceRelativePath === null &&
+            availableEditors.includes("file-manager")
+              ? () =>
+                  openInEditor({
+                    environmentId,
+                    input: { cwd: fileLinkMeta.filePath, editor: "file-manager" },
+                  })
+              : undefined
+          }
           onOpenInBrowser={
             threadRef &&
             canOperatePreview &&
@@ -2701,11 +2766,13 @@ function useChatMarkdownState({
       );
     },
     [
+      availableEditors,
       canUseShellActions,
       canOperatePreview,
       environmentId,
       fileLinkParentSuffixByPath,
       openFileInPanel,
+      openInEditor,
       openInPreferredEditor,
       openMarkdownFileInPreview,
       openMarkdownMedia,
