@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The integration fixture binds the same platform socket or named pipe as the CLI.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
-import type { DesktopAppOpenWorkspaceRequest } from "@t3tools/contracts";
+import { assert, it } from "@effect/vitest";
+import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -19,6 +21,22 @@ import { describe, expect } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
+
+const liveProcess = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await NodeEvents.EventEmitter.once(child, "spawn");
+    return child;
+  }),
+  (child) =>
+    Effect.promise(async () => {
+      const exited = NodeEvents.EventEmitter.once(child, "exit");
+      child.kill();
+      await exited;
+    }),
+);
 
 const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
@@ -46,7 +64,7 @@ async function startFakeDesktop(input: {
   readonly stateSubdirectory?: "userdata" | "dev";
   readonly platform: NodeJS.Platform;
   readonly userId: number | undefined;
-  readonly reply?: (request: DesktopAppOpenWorkspaceRequest) => unknown;
+  readonly reply?: (request: DesktopAppActivationRequest) => unknown;
 }) {
   const target = resolveDesktopAppControlAddress({
     stateDir: NodePath.join(input.baseDir, input.stateSubdirectory ?? "userdata"),
@@ -62,7 +80,7 @@ async function startFakeDesktop(input: {
     });
   }
 
-  const received: DesktopAppOpenWorkspaceRequest[] = [];
+  const received: DesktopAppActivationRequest[] = [];
   const server = NodeNet.createServer((socket) => {
     socket.setEncoding("utf8");
     let buffer = "";
@@ -70,7 +88,7 @@ async function startFakeDesktop(input: {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
-      const request = JSON.parse(buffer.slice(0, newline)) as DesktopAppOpenWorkspaceRequest;
+      const request = JSON.parse(buffer.slice(0, newline)) as DesktopAppActivationRequest;
       received.push(request);
       const response = input.reply
         ? input.reply(request)
@@ -165,9 +183,11 @@ describe("t3 server command safety", () => {
         const baseDir = NodePath.join(root, "home");
         const stateDir = NodePath.join(baseDir, "userdata");
         const statePath = NodePath.join(stateDir, "server-runtime.json");
+        const child = yield* liveProcess;
+        assert(child.pid !== undefined);
         const record = yield* encodeRuntimeState({
           version: 1,
-          pid: process.pid,
+          pid: child.pid,
           port: 3773,
           origin: "http://127.0.0.1:3773",
           startedAt: "2026-10-01T00:00:00.000Z",
