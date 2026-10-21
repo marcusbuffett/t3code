@@ -40,7 +40,6 @@ import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
 import * as DesktopCliCommand from "./app/DesktopCliCommand.ts";
-import * as DesktopThreadLink from "./app/DesktopThreadLink.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -104,9 +103,6 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-// The remote runs the exact release this app is on, from its self-contained
-// archive, so it needs neither Node nor npm. Development points the remote at
-// a source checkout instead so the two sides can be iterated together.
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): RemoteT3RunnerOptions => {
@@ -188,23 +184,16 @@ const layerDesktopAppActivation = DesktopAppActivation.layer.pipe(
   Layer.provide(layerDesktopWindow),
 );
 
-// Pool layer instantiates the backend factory once for the Windows
-// primary instance and exposes it via pool.primary. Consumers go through
-// the pool now; the legacy DesktopBackendManager service is gone. The
-// WSL second instance gets registered later in the migration. See
-// DesktopBackendPool.ts header for the full rollout plan.
 const layerDesktopBackend = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
   Layer.provideMerge(DesktopWslServerTree.layer),
   Layer.provideMerge(DesktopTelemetryPublisher.layer),
   Layer.provideMerge(layerDesktopWindow),
 );
 
-// WSL orchestrator hangs off the backend layer because it needs the
-// pool + configuration + serverExposure; it pulls NetService and the
-// foundation services through the same provideMerge chain.
 const layerDesktopWslBackend = DesktopWslBackend.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
@@ -213,18 +202,13 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
 
-const layerDesktopThreadLink = DesktopThreadLink.layer.pipe(
-  Layer.provideMerge(layerDesktopAppActivation),
-);
-
 const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,
-  layerDesktopThreadLink,
+  layerDesktopAppActivation,
   DesktopWebLinks.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
-  DesktopShellEnvironment.layer,
   layerDesktopSsh,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
