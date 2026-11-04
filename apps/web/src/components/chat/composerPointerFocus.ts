@@ -1,12 +1,9 @@
 import type { PointerEvent } from "react";
 
 /**
- * Keep the editor focused when a composer control is pressed with a mouse or
- * pen. Touch is deliberately left alone: iOS Safari drops the synthesized
- * `click` when `pointerdown` is cancelled, so the control would show its
- * pressed state without ever acting. Tapping therefore blurs the editor like
- * any other button; {@link shouldSkipComposerCollapse} keeps that blur from
- * collapsing the phone composer mid-tap.
+ * Keep the editor focused on mouse or pen presses. Touch is left alone because
+ * iOS Safari drops the `click` when `pointerdown` is cancelled;
+ * {@link shouldSkipComposerCollapse} keeps the resulting blur from collapsing the composer.
  */
 export function preventPointerFocus(event: PointerEvent<HTMLElement>): void {
   if (event.pointerType === "touch") return;
