@@ -178,7 +178,7 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
-  /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  /** Short temp root: keeps Windows unpack paths under 260 chars and POSIX child Unix sockets under SUN_LEN (108 bytes). */
   readonly runtimeTemp: string;
 }
 
@@ -189,9 +189,16 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
   const key = Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(instanceId)));
+  const runtimeKey = Hex.encode(
+    yield* digest.digest(Digest.sha256, new TextEncoder().encode(`${stateDir}\0${instanceId}`)),
+  );
+  const runtimeTemp =
+    path.sep === "/"
+      ? path.join("/tmp", "t3-ag", runtimeKey.slice(0, 8))
+      : path.join(stateDir, "antigravity-tmp", key.slice(0, 12));
   return {
     profile: path.join(stateDir, "providers", "antigravity", key),
-    runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+    runtimeTemp,
   } satisfies AntigravityInstanceDirectories;
 });
 

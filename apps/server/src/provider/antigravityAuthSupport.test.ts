@@ -221,6 +221,22 @@ describe("Antigravity process environment", () => {
       ).toBeGreaterThanOrEqual(260);
     }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
   );
+
+  it.effect("keeps POSIX runtimeTemp short for child Unix sockets while isolating stateDirs", () =>
+    Effect.gen(function* () {
+      const a = yield* resolveAntigravityInstanceDirectories(
+        "/home/a-twenty-char-person/.t3/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      const b = yield* resolveAntigravityInstanceDirectories(
+        "/home/other-user/.t3/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      expect(a.runtimeTemp).toMatch(/^\/tmp\/t3-ag\/[0-9a-f]{8}$/);
+      expect(`${a.runtimeTemp}/run-AbC123`.length).toBeLessThan(40);
+      expect(a.runtimeTemp).not.toBe(b.runtimeTemp);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
 });
 
 describe("Antigravity authorization URL", () => {
