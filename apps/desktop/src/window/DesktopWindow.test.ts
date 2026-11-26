@@ -1724,6 +1724,155 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("offers to open and copy a URL selected as plain text in the native context menu", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const copied = yield* Deferred.make<string>();
+      const openedExternalUrls: unknown[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        openedExternalUrls,
+        onPopupTemplate: (input) => Deferred.succeed(popup, input),
+        onCopyText: (text) => Deferred.succeed(copied, text),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+        contextMenu(
+          { preventDefault: vi.fn() },
+          {
+            linkURL: "",
+            selectionText: "`https://github.com/marcusbuffett/t3code/pull/12`,",
+            misspelledWord: "",
+            dictionarySuggestions: [],
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: true, canPaste: false, canSelectAll: true },
+          },
+        );
+
+        const { template } = yield* Deferred.await(popup);
+        const openItem = template.find((item) => item.label === "Open Link in Browser");
+        const copyItem = template.find((item) => item.label === "Copy Link");
+        assert.isDefined(openItem);
+        assert.isDefined(copyItem);
+        assert.deepEqual(
+          template.filter((item) => item.role).map((item) => item.role),
+          ["cut", "copy", "paste", "selectAll"],
+        );
+
+        openItem?.click?.({} as Electron.MenuItem, fakeWindow.window, {} as Electron.KeyboardEvent);
+        copyItem?.click?.({} as Electron.MenuItem, fakeWindow.window, {} as Electron.KeyboardEvent);
+        assert.equal(
+          yield* Deferred.await(copied),
+          "https://github.com/marcusbuffett/t3code/pull/12",
+        );
+        assert.deepEqual(openedExternalUrls, ["https://github.com/marcusbuffett/t3code/pull/12"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("offers to open a URL right-clicked without selection via point lookup", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const mainFrame = {};
+      Object.assign(fakeWindow.window.webContents, {
+        mainFrame,
+        executeJavaScriptInIsolatedWorld: vi.fn(async () => "http://localhost:3000/dashboard"),
+      });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const openedExternalUrls: unknown[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        openedExternalUrls,
+        onPopupTemplate: (input) => Deferred.succeed(popup, input),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+        contextMenu(
+          { preventDefault: vi.fn() },
+          {
+            x: 120,
+            y: 240,
+            frame: mainFrame,
+            linkURL: "",
+            selectionText: "",
+            misspelledWord: "",
+            dictionarySuggestions: [],
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: false, canPaste: false, canSelectAll: true },
+          },
+        );
+
+        const { template } = yield* Deferred.await(popup);
+        const openItem = template.find((item) => item.label === "Open Link in Browser");
+        assert.isDefined(openItem);
+        openItem?.click?.({} as Electron.MenuItem, fakeWindow.window, {} as Electron.KeyboardEvent);
+        assert.deepEqual(openedExternalUrls, ["http://localhost:3000/dashboard"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not offer Open Link in Browser for non-URL selected text", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popup = yield* Deferred.make<ElectronMenu.ElectronMenuTemplateInput>();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        onPopupTemplate: (input) => Deferred.succeed(popup, input),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+        contextMenu(
+          { preventDefault: vi.fn() },
+          {
+            linkURL: "",
+            selectionText: "params.selectionText",
+            misspelledWord: "",
+            dictionarySuggestions: [],
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: true, canPaste: false, canSelectAll: true },
+          },
+        );
+
+        const { template } = yield* Deferred.await(popup);
+        assert.isUndefined(template.find((item) => item.label === "Open Link in Browser"));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>

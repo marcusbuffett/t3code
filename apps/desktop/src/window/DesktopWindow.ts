@@ -45,6 +45,11 @@ import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import {
+  canResolveContextMenuTextLinkAtPoint,
+  parseContextMenuTextUrl,
+  resolveContextMenuTextLinkAtPoint,
+} from "./ContextMenuLink.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -657,110 +662,168 @@ export const make = Effect.gen(function* () {
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
+      let latestContextMenuId = 0;
       contents.on("context-menu", (event, params) => {
         event.preventDefault();
         if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
         // Right-clicking a guest may leave native editing roles targeting the host renderer.
         contents.focus();
 
-        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+        const menuId = ++latestContextMenuId;
+        const hasExternalLinkUrl = Option.isSome(
+          ElectronShell.parseSafeExternalUrl(params.linkURL),
+        );
+        const mailtoAddress = parseMailtoAddress(params.linkURL);
 
-        if (isBrowserContents) {
-          menuTemplate.push(
-            {
-              label: m(msg("Reload")),
-              click: () => {
-                if (!contents.isDestroyed()) contents.reload();
+        const openMenu = (textLinkUrl: Option.Option<string>): void => {
+          if (
+            menuId !== latestContextMenuId ||
+            contents.isDestroyed() ||
+            ownerWindow.isDestroyed()
+          ) {
+            return;
+          }
+          const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+
+          if (isBrowserContents) {
+            menuTemplate.push(
+              {
+                label: m(msg("Reload")),
+                click: () => {
+                  if (!contents.isDestroyed()) contents.reload();
+                },
               },
-            },
-            { type: "separator" },
-          );
-        }
+              { type: "separator" },
+            );
+          }
 
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+          if (params.misspelledWord) {
+            for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+              menuTemplate.push({
+                label: suggestion,
+                click: () => {
+                  if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+                },
+              });
+            }
+            if (params.dictionarySuggestions.length === 0) {
+              menuTemplate.push({ label: m(msg("No suggestions")), enabled: false });
+            }
+            menuTemplate.push({ type: "separator" });
+          }
+
+          if (hasExternalLinkUrl) {
+            menuTemplate.push(
+              {
+                label: m(msg("Copy Link")),
+                click: () => {
+                  void runPromise(electronShell.copyText(params.linkURL));
+                },
+              },
+              { type: "separator" },
+            );
+          } else if (Option.isSome(textLinkUrl)) {
+            const targetUrl = textLinkUrl.value;
+            menuTemplate.push(
+              {
+                label: m(msg("Open Link in Browser")),
+                click: () => {
+                  void runPromise(electronShell.openExternal(targetUrl));
+                },
+              },
+              {
+                label: m(msg("Copy Link")),
+                click: () => {
+                  void runPromise(electronShell.copyText(targetUrl));
+                },
+              },
+              { type: "separator" },
+            );
+          }
+
+          if (Option.isSome(mailtoAddress)) {
+            menuTemplate.push(
+              {
+                label: m(msg("Copy Email Address")),
+                click: () => {
+                  void runPromise(electronShell.copyText(mailtoAddress.value));
+                },
+              },
+              { type: "separator" },
+            );
+          }
+
+          if (params.mediaType === "image") {
             menuTemplate.push({
-              label: suggestion,
+              label: m(msg("Copy Image")),
               click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+                void runPromise(
+                  Effect.tryPromise({
+                    try: () => copyContextMenuImage(contents, params),
+                    catch: (cause) => new ContextMenuImageCopyError({ cause }),
+                  }).pipe(
+                    Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
+                  ),
+                );
               },
             });
+            menuTemplate.push({ type: "separator" });
           }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: m(msg("No suggestions")), enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
 
-        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(
             {
-              label: m(msg("Copy Link")),
-              click: () => {
-                void runPromise(electronShell.copyText(params.linkURL));
-              },
+              role: "cut",
+              label: m(msg("Cut", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canCut,
             },
-            { type: "separator" },
-          );
-        }
-
-        const mailtoAddress = parseMailtoAddress(params.linkURL);
-        if (Option.isSome(mailtoAddress)) {
-          menuTemplate.push(
             {
-              label: m(msg("Copy Email Address")),
-              click: () => {
-                void runPromise(electronShell.copyText(mailtoAddress.value));
-              },
+              role: "copy",
+              label: m(msg("Copy", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canCopy,
             },
-            { type: "separator" },
+            {
+              role: "paste",
+              label: m(msg("Paste", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canPaste,
+            },
+            {
+              role: "selectAll",
+              label: m(msg("Select All", { $context: "Edit menu item" })),
+              enabled: params.editFlags.canSelectAll,
+            },
           );
+
+          void runPromise(
+            electronMenu.popupTemplate({
+              window: ownerWindow,
+              template: menuTemplate,
+              ...(params.frame ? { frame: params.frame } : {}),
+            }),
+          );
+        };
+
+        const selectionText = params.selectionText ?? "";
+        const selectedLinkUrl =
+          hasExternalLinkUrl || Option.isSome(mailtoAddress)
+            ? Option.none<string>()
+            : parseContextMenuTextUrl(selectionText);
+
+        if (
+          hasExternalLinkUrl ||
+          Option.isSome(mailtoAddress) ||
+          Option.isSome(selectedLinkUrl) ||
+          selectionText.trim().length > 0 ||
+          params.mediaType === "image" ||
+          !canResolveContextMenuTextLinkAtPoint(contents, params)
+        ) {
+          openMenu(selectedLinkUrl);
+          return;
         }
 
-        if (params.mediaType === "image") {
-          menuTemplate.push({
-            label: m(msg("Copy Image")),
-            click: () => {
-              void runPromise(
-                Effect.tryPromise({
-                  try: () => copyContextMenuImage(contents, params),
-                  catch: (cause) => new ContextMenuImageCopyError({ cause }),
-                }).pipe(Effect.catch(() => logWindowWarning("failed to copy context-menu image"))),
-              );
-            },
-          });
-          menuTemplate.push({ type: "separator" });
-        }
-
-        menuTemplate.push(
-          {
-            role: "cut",
-            label: m(msg("Cut", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canCut,
+        void runPromise(resolveContextMenuTextLinkAtPoint(contents, params)).then(
+          (pointLinkUrl) => {
+            openMenu(pointLinkUrl);
           },
-          {
-            role: "copy",
-            label: m(msg("Copy", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canCopy,
-          },
-          {
-            role: "paste",
-            label: m(msg("Paste", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canPaste,
-          },
-          {
-            role: "selectAll",
-            label: m(msg("Select All", { $context: "Edit menu item" })),
-            enabled: params.editFlags.canSelectAll,
-          },
-        );
-
-        void runPromise(
-          electronMenu.popupTemplate({
-            window: ownerWindow,
-            template: menuTemplate,
-            ...(params.frame ? { frame: params.frame } : {}),
-          }),
         );
       });
       contents.on("did-create-window", (popup) => {
